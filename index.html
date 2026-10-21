@@ -1590,5 +1590,31 @@ const cocinaDB = window.supabase.createClient(
   'https://ijcfchohlrpixrrycryc.supabase.co',
   'sb_publishable_HIXlYTTr1QEIHF8kmUqq9w_6rgCk3M-'
 );
+  async function cargarAlimentosCompartidos() {
+  const { data: alimentos, error } = await cocinaDB
+    .from('alimentos')
+    .select('*')
+    .order('nombre');
+
+  if (error) {
+    showToast('No se pudo actualizar el listado. Intenta recargar.');
+    return;
+  }
+
+  if (!alimentos.length) return;
+
+  data = alimentos.map(a => [
+    a.nombre, a.elemento, a.polaridad, a.andino
+  ]);
+
+  adminReasons = {};
+  alimentos.forEach(a => {
+    adminReasons[norm(a.nombre)] = a.razon;
+  });
+
+  render();
+}
+
+cargarAlimentosCompartidos();
 </script></body>
 </html>
