@@ -569,56 +569,26 @@ body{font-family:'Jost',sans-serif;background:var(--bg);color:var(--text);min-he
 
 <div class="toast" id="toast"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 /* ══════════════════════════════════════
    CONTADOR GLOBAL PERSISTENTE
    Usa countapi.xyz (gratuito, sin backend)
    namespace: cihoperu  key: visitas-5elementos
 ══════════════════════════════════════ */
-const CNT_URL = 'https://api.countapi.xyz/hit/cihoperu/visitas-5elementos';
-const CNT_GET = 'https://api.countapi.xyz/get/cihoperu/visitas-5elementos';
-
-function safeNum(val){
-  const n = parseInt(val, 10);
-  return (!isNaN(n) && n >= 0) ? n : 0;
+function setCounterUI(valor){
+  const texto=valor===null?'—':Number(valor).toLocaleString('es-PE');
+  ['cntNumPortada','cntNumHeader'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent=texto;});
 }
-
-function formatNum(n){
-  return safeNum(n).toLocaleString('es-PE');
+async function actualizarContador(sumar=false){
+  let incrementar=sumar;
+  try{if(sumar&&sessionStorage.getItem('cocina_visita_contada'))incrementar=false;}catch(e){}
+  const {data:total,error}=await cocinaDB.rpc('cocina_visitas',{sumar:incrementar});
+  if(error){setCounterUI(null);return;}
+  if(incrementar){try{sessionStorage.setItem('cocina_visita_contada','1');}catch(e){}}
+  setCounterUI(total);
 }
-
-function setCounterUI(val){
-  const f = formatNum(val);
-  const n = safeNum(val);
-  const labelHeader  = 'usos';
-  const labelPortada = 'veces';
-  const a = document.getElementById('cntNumPortada');
-  const b = document.getElementById('cntNumHeader');
-  const aLabel = document.getElementById('cntLabelPortada');
-  const bLabel = document.getElementById('cntLabelHeader');
-  if(a) a.textContent = f;
-  if(b) b.textContent = f;
-  if(aLabel) aLabel.textContent = labelPortada;
-  if(bLabel) bLabel.textContent = labelHeader;
-}
-
-// Valor por defecto seguro mientras carga
-setCounterUI(0);
-
-// Al cargar: obtener conteo actual sin incrementar
-fetch(CNT_GET)
-  .then(r => { if(!r.ok) throw new Error('red'); return r.json(); })
-  .then(d => { setCounterUI(d && d.value != null ? d.value : 0); })
-  .catch(() => setCounterUI(0));
-
-// Al entrar a la app: incrementar +1
-function hitCounter(){
-  fetch(CNT_URL)
-    .then(r => { if(!r.ok) throw new Error('red'); return r.json(); })
-    .then(d => { setCounterUI(d && d.value != null ? d.value : 0); })
-    .catch(() => {});
-}
-
+function hitCounter(){actualizarContador(true).catch(()=>setCounterUI(null));}
 /* ══════════════════════════════════════
    DATOS Y CONFIGURACIÓN
 ══════════════════════════════════════ */
@@ -1119,42 +1089,6 @@ let data = BASE.map(r => [r[0], r[1], r[2], ANDINOS_SET.has(r[0])]);
 let adminReasons = {};
 let deletedBaseNames = new Set();
 
-// Cambios hechos por la administradora en ESTE navegador/dispositivo.
-// Se guardan como:
-// - extras: alimentos nuevos
-// - overrides: cambios a fichas existentes
-// - deleted: fichas base ocultadas/eliminadas
-// - reasons: textos terapéuticos editados
-try{
-  const extras = JSON.parse(localStorage.getItem('cihoperu_alimentos_admin') || '[]');
-  const overrides = JSON.parse(localStorage.getItem('cihoperu_alimentos_overrides') || '{}');
-  const deleted = JSON.parse(localStorage.getItem('cihoperu_alimentos_deleted') || '[]');
-  adminReasons = JSON.parse(localStorage.getItem('cihoperu_razones_admin') || '{}') || {};
-  deletedBaseNames = new Set(Array.isArray(deleted) ? deleted.map(norm) : []);
-
-  // Aplicar eliminaciones de la base
-  data = data.filter(r => !deletedBaseNames.has(norm(r[0])));
-
-  // Aplicar ediciones a fichas base
-  if(overrides && typeof overrides === 'object'){
-    data = data.map(r => {
-      const o = overrides[norm(r[0])];
-      return Array.isArray(o) && o.length >= 4 ? o : r;
-    });
-  }
-
-  // Añadir alimentos nuevos
-  if(Array.isArray(extras)){
-    extras.forEach(r=>{
-      if(Array.isArray(r) && r.length>=4 && !data.find(x=>norm(x[0])===norm(r[0]))) data.push(r);
-    });
-  }
-
-  data.sort((a,b) => a[0].localeCompare(b[0]));
-}catch(e){
-  data.sort((a,b) => a[0].localeCompare(b[0]));
-}
-
 let elFil='Todos', polFil='Todos', origFil='Todos';
 const ELS  = ['Todos','Madera','Fuego','Tierra','Metal','Agua'];
 const POLS = ['Todos','Yin','Yang','Neutro'];
@@ -1410,211 +1344,123 @@ document.addEventListener('keydown', e=>{
   if(e.key==='Escape') document.getElementById('overlay').classList.remove('open');
 });
 
-/* ── Administración y agregar alimento ── */
-const ADMIN_KEY = 'cihoperu_admin_pin_hash';
-let adminOpen = false;
-
-async function hashText(txt){
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(txt));
-  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
-}
-
-async function openAdmin(){
-  let savedHash = localStorage.getItem(ADMIN_KEY);
-  if(!savedHash){
-    const p1 = prompt('Crea tu clave de administradora (mínimo 6 caracteres):');
-    if(p1===null) return;
-    if(p1.length < 6){ showToast('⚠ La clave debe tener al menos 6 caracteres.'); return; }
-    const p2 = prompt('Repite la clave:');
-    if(p2===null || p1!==p2){ showToast('⚠ Las claves no coinciden.'); return; }
-    savedHash = await hashText(p1);
-    localStorage.setItem(ADMIN_KEY, savedHash);
-    showToast('✓ Clave de administradora creada en este dispositivo.');
-  }else{
-    const p = prompt('Clave de administradora:');
-    if(p===null) return;
-    const h = await hashText(p);
-    if(h!==savedHash){ showToast('⚠ Clave incorrecta.'); return; }
-  }
-  adminOpen = true;
-  document.getElementById('adminClosed').style.display='none';
-  document.getElementById('adminPanel').style.display='block';
-
-  const q = (document.getElementById('searchInput')?.value || '').trim();
-  if(q){
-    const exact = data.some(r => norm(r[0]) === norm(q));
-    const nNombre = document.getElementById('nNombre');
-    if(!exact && nNombre && !nNombre.value) nNombre.value = q;
-  }
-}
-
-function closeAdmin(){
-  adminOpen = false;
-  document.getElementById('adminPanel').style.display='none';
-  document.getElementById('adminClosed').style.display='flex';
-}
-
-function isBaseFoodName(name){
-  return BASE.some(b => norm(b[0])===norm(name));
-}
-
-function saveAdminFoods(){
-  const extras = data.filter(r => !isBaseFoodName(r[0]));
-  localStorage.setItem('cihoperu_alimentos_admin', JSON.stringify(extras));
-  localStorage.setItem('cihoperu_razones_admin', JSON.stringify(adminReasons));
-  localStorage.setItem('cihoperu_alimentos_deleted', JSON.stringify(Array.from(deletedBaseNames)));
-}
-
-function saveBaseOverride(originalName, row){
-  const key = norm(originalName);
-  const overrides = JSON.parse(localStorage.getItem('cihoperu_alimentos_overrides') || '{}') || {};
-  overrides[key] = row;
-  localStorage.setItem('cihoperu_alimentos_overrides', JSON.stringify(overrides));
-}
-
-function removeBaseOverride(originalName){
-  const key = norm(originalName);
-  const overrides = JSON.parse(localStorage.getItem('cihoperu_alimentos_overrides') || '{}') || {};
-  delete overrides[key];
-  localStorage.setItem('cihoperu_alimentos_overrides', JSON.stringify(overrides));
-}
-
-function addFood(){
-  if(!adminOpen){ showToast('🔒 Acceso solo para administradora.'); return; }
-  const n      = norm(document.getElementById('nNombre').value.trim());
-  const el     = document.getElementById('nEl').value;
-  const pol    = document.getElementById('nPol').value;
-  const andino = document.getElementById('chkAndino').checked;
-  if(!n){ showToast('⚠ Escribe el nombre del alimento.'); return; }
-  if(data.find(r=>norm(r[0])===n)){ showToast('⚠ Este alimento ya existe.'); return; }
-  const row = [n, el, pol, andino];
-  data.push(row);
-  const razonNueva = (document.getElementById('nRazon')?.value || '').trim();
-  if(razonNueva) adminReasons[norm(n)] = razonNueva;
-  data.sort((a,b)=>a[0].localeCompare(b[0]));
-  saveAdminFoods();
-  document.getElementById('nNombre').value = '';
-  if(document.getElementById('nRazon')) document.getElementById('nRazon').value = '';
-  document.getElementById('chkAndino').checked = false;
-  showToast('✓ '+cap(n)+' agregado en este dispositivo.');
-  render();
-}
-
-function editFood(idx){
-  if(!adminOpen){ showToast('🔒 Acceso solo para administradora.'); return; }
-  const r = data[idx];
-  if(!r) return;
-
-  const originalName = r[0];
-  const nombre = prompt('Nombre del alimento:', cap(r[0]));
-  if(nombre===null) return;
-  const n = norm(nombre);
-  if(!n){ showToast('⚠ El nombre no puede quedar vacío.'); return; }
-
-  const duplicate = data.find((x,j)=>j!==idx && norm(x[0])===n);
-  if(duplicate){ showToast('⚠ Ya existe otro alimento con ese nombre.'); return; }
-
-  const el = prompt('Elemento: Madera, Fuego, Tierra, Metal o Agua', r[1]);
-  if(el===null) return;
-  const elOk = ['Madera','Fuego','Tierra','Metal','Agua'].find(x=>norm(x)===norm(el));
-  if(!elOk){ showToast('⚠ Elemento no válido.'); return; }
-
-  const pol = prompt('Polaridad: Yin, Yang o Neutro', r[2]);
-  if(pol===null) return;
-  const polOk = ['Yin','Yang','Neutro'].find(x=>norm(x)===norm(pol));
-  if(!polOk){ showToast('⚠ Polaridad no válida.'); return; }
-
-  const andinoTxt = prompt('¿Es alimento andino/peruano? Escribe SI o NO', r[3] ? 'SI' : 'NO');
-  if(andinoTxt===null) return;
-  const andino = ['SI','SÍ','YES','Y'].includes(norm(andinoTxt));
-
-  const razonActual = adminReasons[norm(originalName)] || RAZONES[originalName] || '';
-  const razon = prompt('Acción terapéutica:', razonActual);
-  if(razon===null) return;
-
-  const newRow = [n, elOk, polOk, andino];
-  data[idx] = newRow;
-
-  // Mover la razón si cambió el nombre
-  delete adminReasons[norm(originalName)];
-  if(razon.trim()) adminReasons[norm(n)] = razon.trim();
-
-  // Si era ficha base, guardar override. Si cambió de nombre, conservar la referencia al original.
-  if(isBaseFoodName(originalName)){
-    saveBaseOverride(originalName, newRow);
-  }else{
-    // Si un alimento agregado adopta el nombre de una ficha base, evitar conflicto.
-    if(isBaseFoodName(n)){
-      showToast('⚠ No puedes convertir un alimento agregado en una ficha base existente.');
-      return;
-    }
-  }
-
-  data.sort((a,b)=>a[0].localeCompare(b[0]));
-  saveAdminFoods();
-  document.getElementById('overlay').classList.remove('open');
-  showToast('✓ Ficha actualizada.');
-  render();
-}
-
-function deleteFood(idx){
-  if(!adminOpen){ showToast('🔒 Acceso solo para administradora.'); return; }
-  const r = data[idx];
-  if(!r) return;
-  const nombre = r[0];
-  if(!confirm('¿Eliminar "'+cap(nombre)+'"? Esta acción afectará esta copia de la app en este dispositivo.')) return;
-
-  if(isBaseFoodName(nombre)){
-    deletedBaseNames.add(norm(nombre));
-    removeBaseOverride(nombre);
-  }
-
-  delete adminReasons[norm(nombre)];
-  data.splice(idx,1);
-  saveAdminFoods();
-  document.getElementById('overlay').classList.remove('open');
-  showToast('✓ '+cap(nombre)+' eliminado.');
-  render();
-}
-
+const cocinaDB = window.supabase.createClient('https://ijcfchohlrpixrrycryc.supabase.co', 'sb_publishable_HIXlYTTr1QEIHF8kmUqq9w_6rgCk3M-');
+const MAYLIS_UID = '7512133b-1323-4a43-9eb5-5a8b9f183c94';
+let adminOpen = false, guardando = false, nubeLista = false;
+let registrosNube = [];
+const escapar = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function showToast(msg){
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.classList.add('show');
-  setTimeout(()=>t.classList.remove('show'), 3000);
+  const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),5000);
 }
-</script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script>
-const cocinaDB = window.supabase.createClient(
-  'https://ijcfchohlrpixrrycryc.supabase.co',
-  'sb_publishable_HIXlYTTr1QEIHF8kmUqq9w_6rgCk3M-'
-);
-  async function cargarAlimentosCompartidos() {
-  const { data: alimentos, error } = await cocinaDB
-    .from('alimentos')
-    .select('*')
-    .order('nombre');
-
-  if (error) {
-    showToast('No se pudo actualizar el listado. Intenta recargar.');
-    return;
+function estadoAdmin(abierto){
+  adminOpen=abierto;
+  document.getElementById('adminClosed').style.display=abierto?'none':'flex';
+  document.getElementById('adminPanel').style.display=abierto?'block':'none';
+  document.getElementById('overlay').classList.remove('open');
+}
+async function cargarAlimentosCompartidos(){
+  const {data:filas,error}=await cocinaDB.from('alimentos').select('*').order('nombre');
+  if(error) throw error;
+  registrosNube=filas;
+  nubeLista=true;
+  if(filas.length){
+    data=filas.map(a=>[escapar(a.nombre),a.elemento,a.polaridad,a.andino]);
+    adminReasons={};
+    filas.forEach(a=>adminReasons[norm(escapar(a.nombre))]=escapar(a.razon)||'Sin descripción.');
+  }else{
+    data=BASE.map(r=>[r[0],r[1],r[2],ANDINOS_SET.has(r[0])]); adminReasons={};
   }
-
-  if (!alimentos.length) return;
-
-  data = alimentos.map(a => [
-    a.nombre, a.elemento, a.polaridad, a.andino
-  ]);
-
-  adminReasons = {};
-  alimentos.forEach(a => {
-    adminReasons[norm(a.nombre)] = a.razon;
-  });
-
   render();
 }
+function solicitarAcceso(){
+  return new Promise(resolve=>{
+    const d=document.createElement('dialog');
+    d.style.cssText='border:0;border-radius:18px;padding:26px;max-width:380px;width:85%;background:#f5f0e8;color:#234031';
+    d.innerHTML='<form><h2>Administrar alimentos</h2><label>Correo<input name="correo" type="email" autocomplete="username" required style="display:block;width:100%;box-sizing:border-box;margin:8px 0 18px;padding:10px"></label><label>Contraseña<input name="clave" type="password" autocomplete="current-password" required style="display:block;width:100%;box-sizing:border-box;margin:8px 0 18px;padding:10px"></label><p>Usa el acceso que creaste en Supabase.</p><button type="button" id="cancelarAcceso">Cancelar</button> <button type="submit">Entrar</button></form>';
+    document.body.append(d);
+    let terminado=false;
+    const terminar=v=>{if(terminado)return;terminado=true;d.close();d.remove();resolve(v);};
+    d.querySelector('form').onsubmit=e=>{e.preventDefault();const f=new FormData(e.target);terminar({email:String(f.get('correo')).trim(),password:String(f.get('clave'))});};
+    d.querySelector('#cancelarAcceso').onclick=()=>terminar(null);
+    d.oncancel=e=>{e.preventDefault();terminar(null);}; d.showModal();
+  });
+}
+async function openAdmin(){
+  try{
+    let {data:{user}}=await cocinaDB.auth.getUser();
+    if(!user){
+      const acceso=await solicitarAcceso(); if(!acceso)return;
+      const respuesta=await cocinaDB.auth.signInWithPassword(acceso);
+      if(respuesta.error)throw new Error('Correo o contraseña incorrectos.');
+      user=respuesta.data.user;
+    }
+    if(user.id!==MAYLIS_UID){await cocinaDB.auth.signOut();throw new Error('Esta cuenta no tiene permiso de administración.');}
+    await cargarAlimentosCompartidos();
+    if(!registrosNube.length){
+      if(!confirm('La base compartida está vacía. ¿Cargar los '+BASE.length+' alimentos originales? La prueba local no se incluirá.'))return;
+      const filas=BASE.map(r=>({nombre:r[0],elemento:r[1],polaridad:r[2],andino:ANDINOS_SET.has(r[0]),razon:RAZONES[r[0]]||''}));
+      const {error}=await cocinaDB.from('alimentos').insert(filas);if(error)throw error;
+      await cargarAlimentosCompartidos();
+    }
+    estadoAdmin(true);showToast('Acceso abierto. Los cambios se guardan para todos.');
+  }catch(e){estadoAdmin(false);showToast(e.message||'No se pudo abrir la administración.');}
+}
+async function closeAdmin(){
+  estadoAdmin(false);await cocinaDB.auth.signOut();showToast('Sesión cerrada.');
+}
+async function guardarCambio(operacion){
+  if(!adminOpen||!nubeLista){showToast('Entra como administradora para guardar.');return false;}
+  if(guardando)return false;
+  guardando=true;
+  try{
+    const {data:{user},error:authError}=await cocinaDB.auth.getUser();
+    if(authError||user?.id!==MAYLIS_UID){estadoAdmin(false);throw new Error('Tu sesión terminó. Vuelve a entrar.');}
+    const {data:afectadas,error}=await operacion();
+    if(error)throw error;
+    if(!afectadas?.length)throw new Error('No se guardó el cambio. Recarga y vuelve a intentarlo.');
+    await cargarAlimentosCompartidos();
+    document.getElementById('overlay').classList.remove('open');
+    showToast('Guardado en la base compartida.');return true;
+  }catch(e){showToast('No se pudo completar: '+e.message);return false;}
+  finally{guardando=false;}
+}
+async function addFood(){
+  const nombre=norm(document.getElementById('nNombre').value);
+  if(!nombre){showToast('Escribe el nombre del alimento.');return;}
+  if(registrosNube.some(a=>norm(a.nombre)===nombre)){showToast('Este alimento ya existe.');return;}
+  const fila={nombre,elemento:document.getElementById('nEl').value,polaridad:document.getElementById('nPol').value,andino:document.getElementById('chkAndino').checked,razon:document.getElementById('nRazon').value.trim()};
+  if(await guardarCambio(()=>cocinaDB.from('alimentos').insert(fila).select('id'))){
+    document.getElementById('nNombre').value='';document.getElementById('nRazon').value='';document.getElementById('chkAndino').checked=false;
+  }
+}
+async function editFood(idx){
+  if(!adminOpen)return;
+  const a=registrosNube[idx];if(!a)return;
+  const nombre=prompt('Nombre del alimento:',a.nombre);if(nombre===null)return;
+  if(!norm(nombre)){showToast('Escribe un nombre.');return;}
+  if(registrosNube.some(x=>x.id!==a.id&&norm(x.nombre)===norm(nombre))){showToast('Este nombre ya existe.');return;}
+  const el=prompt('Elemento: Madera, Fuego, Tierra, Metal o Agua',a.elemento);if(el===null)return;
+  const elemento=['Madera','Fuego','Tierra','Metal','Agua'].find(x=>norm(x)===norm(el));if(!elemento){showToast('Elemento no válido.');return;}
+  const p=prompt('Polaridad: Yin, Yang o Neutro',a.polaridad);if(p===null)return;
+  const polaridad=['Yin','Yang','Neutro'].find(x=>norm(x)===norm(p));if(!polaridad){showToast('Polaridad no válida.');return;}
+  const origen=prompt('¿Andino/peruano? Escribe SI o NO',a.andino?'SI':'NO');if(origen===null)return;
+  if(!['SI','NO'].includes(norm(origen))){showToast('Escribe SI o NO.');return;}
+  const razon=prompt('Acción terapéutica:',a.razon);if(razon===null)return;
+  await guardarCambio(()=>cocinaDB.from('alimentos').update({nombre:norm(nombre),elemento,polaridad,andino:norm(origen)==='SI',razon:razon.trim()}).eq('id',a.id).select('id'));
+}
+async function deleteFood(idx){
+  if(!adminOpen)return;
+  const a=registrosNube[idx];if(!a)return;
+  if(!confirm('¿Eliminar '+a.nombre+' de la lista compartida para todos?'))return;
+  if(registrosNube.length===1){showToast('Conserva al menos un alimento en el catálogo.');return;}
+  await guardarCambio(()=>cocinaDB.from('alimentos').delete().eq('id',a.id).select('id'));
+}
+cocinaDB.auth.onAuthStateChange(event=>{if(event==='SIGNED_OUT')estadoAdmin(false);});
+cargarAlimentosCompartidos().catch(()=>showToast('Sin conexión a la base compartida. Se muestra el listado original.'));
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!guardando)cargarAlimentosCompartidos().catch(()=>{});});
 
-cargarAlimentosCompartidos();
-</script></body>
+actualizarContador().catch(()=>setCounterUI(null));
+</script>
+</body>
 </html>
