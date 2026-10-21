@@ -1584,5 +1584,11 @@ function showToast(msg){
   setTimeout(()=>t.classList.remove('show'), 3000);
 }
 </script>
-</body>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const cocinaDB = window.supabase.createClient(
+  'https://ijcfchohlrpixrrycryc.supabase.co',
+  'sb_publishable_HIXlYTTr1QEIHF8kmUqq9w_6rgCk3M-'
+);
+</script></body>
 </html>
